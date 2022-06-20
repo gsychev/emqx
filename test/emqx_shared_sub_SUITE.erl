@@ -493,6 +493,55 @@ t_dispatch_when_inflights_are_full(_) ->
     emqtt:stop(ConnPid2),
     ok.
 
+t_bug(_) ->
+    ok = ensure_config(round_robin, true),
+    SharedTopic = <<"$share/group/foo/bar">>,
+    Topic = <<"foo/bar">>,
+
+    %% Note that max_inflight is 1
+    {ok, Sub1}       = emqtt:start_link([{clientid, <<"Sub1">>}]),
+    {ok, Sub2}       = emqtt:start_link([{clientid, <<"Sub2">>}]),
+    {ok, ControlSub} = emqtt:start_link([{clientid, <<"ControlSub">>}]),
+    {ok, Publisher}  = emqtt:start_link([{clientid, <<"Publisher">>}]),
+    {ok, _} = emqtt:connect(Sub1),
+    {ok, _} = emqtt:connect(Sub2),
+    {ok, _} = emqtt:connect(ControlSub),
+    {ok, _} = emqtt:connect(Publisher),
+
+    emqtt:subscribe(Sub1, {SharedTopic, 1}),
+    emqtt:subscribe(Sub2, {SharedTopic, 1}),
+    emqtt:subscribe(ControlSub, {SharedTopic, 1}),
+
+    [
+        emqtt:publish(Publisher, Topic, integer_to_binary(I), 1)
+        || I <- [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ],
+    ct:sleep(100),
+    io:format(standard_error, "\n\nMessages sent\n\n", []),
+
+    %% Just in case the test works fine
+    ?assertMatch({true, _}, last_message(integer_to_binary(1), [Sub1, Sub2], 10000)),
+
+    erlang:unlink(Sub1),
+    erlang:unlink(Sub2),
+    %% emqtt:stop(Sub1),
+    %% emqtt:stop(Sub2),
+    erlang:exit(Sub1, kill),
+    erlang:exit(Sub2, kill),
+    ct:sleep(1000),
+    io:format(standard_error, "\n\nSubs killed\n\n", []),
+
+    ct:sleep(100),
+    emqtt:publish(Publisher, Topic, <<"hello">>),
+    io:format(standard_error, "\n\nPublish called\n\n", []),
+    ct:sleep(100),
+    io:format(standard_error, "\n\nPublished\n\n", []),
+
+    ?assertMatch({true, _}, last_message(<<"hello">>, [ControlSub], 10000)),
+
+    emqtt:stop(Publisher),
+    ok.
+
 %%--------------------------------------------------------------------
 %% help functions
 %%--------------------------------------------------------------------
